@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+
+# Bản dựng exe (PyInstaller) — phát hành qua GitHub Releases, không để trong git
+dist/
+build/
+*.spec
+
+# Log chẩn đoán của app
+logs/
+*.log
+
+# Khoá wfb-ng — TUYỆT ĐỐI không đưa lên
+*.key
+
+# File sao lưu
+*.bak*

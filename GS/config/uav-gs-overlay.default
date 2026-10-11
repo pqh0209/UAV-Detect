@@ -1,0 +1,6 @@
+# Tham số thêm cho gs_overlay.py (service uav-gs-overlay). Sửa xong: sudo systemctl restart uav-gs-overlay
+# --udp IP:CỔNG  → phát RTP H.264 (đã vẽ box) thẳng tới 1 máy, LUÔN chạy kể cả khi không ai xem
+#                  (tốn ~1.6 nhân CPU). Laptop mở bằng file uav.sdp (VLC/ffplay) hoặc QGroundControl (UDP 5600).
+#                  Laptop cắm thẳng dây vào Radxa thì đổi IP thành 192.168.50.2.
+# RTSP rtsp://<ip-radxa>:8554/uav vẫn chạy song song (chỉ tốn CPU khi có người mở).
+GS_ARGS="--udp 192.168.50.2:5600 --raw-udp 192.168.50.2:5601 --telem-udp 192.168.50.2:5602"

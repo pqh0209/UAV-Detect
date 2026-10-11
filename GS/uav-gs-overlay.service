@@ -1,0 +1,21 @@
+[Unit]
+Description=UAV ground station: decode wfb-ng video, draw target boxes, re-encode, serve RTSP
+After=network-online.target wifibroadcast@gs.service
+Wants=network-online.target
+
+[Service]
+Environment=GST_MPP_ENC_UNALIGNED_VSTRIDE=1
+# Tham số thêm (vd. phát UDP tới laptop): sửa /etc/default/uav-gs-overlay rồi restart service
+EnvironmentFile=-/etc/default/uav-gs-overlay
+Type=simple
+User=radxa
+Group=video
+ExecStart=/usr/bin/python3 /home/radxa/uav-project/gs_overlay.py $GS_ARGS
+Restart=always
+RestartSec=2
+# Thư viện RGA/MPP có thể in rác ra stdout; log của chương trình đi ra stderr → journal.
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
