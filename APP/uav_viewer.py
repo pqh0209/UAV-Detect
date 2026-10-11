@@ -10,8 +10,8 @@ Kiến trúc: 3 luồng, chỉ giữ khung MỚI NHẤT, không bao giờ xếp 
 Không dùng demuxer RTP / file SDP của FFmpeg (có hàng đợi sắp xếp lại và bộ đệm riêng),
 không đồng bộ theo PTS/đồng hồ: có khung là hiện ngay.
 
-    python uav_viewer.py              # luồng thô từ UAV (UDP 5601) + box vẽ trên laptop (toạ độ UDP 5602)
-    python uav_viewer.py --port 5600  # luồng Radxa đã vẽ box + nén lại (chậm hơn ~60–70 ms)
+    python uav_viewer.py              # video thô từ UAV (UDP 5600) + box vẽ trên laptop (toạ độ UDP 5700)
+Radxa chạy gs_forward.py chuyển tiếp nguyên gói; app tự đăng ký nhận với Radxa (192.168.50.1:5599) mỗi giây.
 Phím: F / F11 / nháy đúp: toàn màn hình · H: HUD · B: box · C: chế độ mất gói (auto/conceal/idr) · Esc / Q: thoát
 """
 
@@ -63,7 +63,9 @@ IDR_SPARSE_SEC = 1.6     # 2 IDR cách nhau lâu hơn → ghi log (luồng chu�
 LOG_EVENTS_PER_SEC = 20  # mỗi loại sự kiện tối đa chừng này dòng / giây
 LOG_KEEP_FILES = 30      # giữ chừng này file log mới nhất
 # --- box mục tiêu vẽ trên laptop ---
-DEFAULT_TRACK_PORT = 5602  # Radxa chuyển tiếp JSON "uav_track" tới đây (gs_overlay.py --telem-udp)
+DEFAULT_TRACK_PORT = 5700  # Radxa (gs_forward.py) chuyển tiếp JSON "uav_track" tới đây
+DEFAULT_GS = "192.168.50.1"  # trạm mặt đất (Radxa, cắm dây thẳng); app tự đăng ký nhận video với nó
+GS_SUBSCRIBE_PORT = 5599     # gs_forward.py: máy xem gửi 1 gói UDP bất kỳ mỗi ~1 s → được gửi video + toạ độ
 TRACK_MAX_AGE = 0.5        # gói toạ độ cũ hơn → không vẽ box (giống Radxa)
 BOX_GREEN = (40, 230, 40)      # mục tiêu đang thấy
 BOX_YELLOW = (255, 210, 0)     # mục tiêu đang dự đoán (lost_frames > 0)
@@ -978,6 +980,37 @@ class TrackReceiver(threading.Thread):
             pass
 
 
+class GsSubscriber(threading.Thread):
+    """Đăng ký nhận video với trạm mặt đất (gs_forward.py trên Radxa): mỗi giây gửi 1 gói UDP nhỏ tới
+    GS:5599 → Radxa gửi video + toạ độ về đúng IP của laptop (hết hạn sau 5 s nếu app tắt). Nhờ vậy
+    laptop đổi IP không phải sửa gì trên Radxa."""
+
+    def __init__(self, gs_ip, port=GS_SUBSCRIBE_PORT):
+        super().__init__(name="gs-sub", daemon=True)
+        self.addr = (gs_ip, port)
+        self.stop_evt = threading.Event()
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    def run(self):
+        ok = None
+        while True:
+            try:
+                self.sock.sendto(b"uav_viewer", self.addr)
+                if ok is not True:
+                    LOG("app", f"đăng ký nhận video với trạm mặt đất {self.addr[0]}:{self.addr[1]}")
+                ok = True
+            except OSError as e:                 # chưa cắm dây / Radxa chưa lên → thử lại sau
+                if ok is not False:
+                    LOG("app", f"không gửi được gói đăng ký tới {self.addr[0]}:{self.addr[1]}: {e}")
+                ok = False
+            if self.stop_evt.wait(1.0):
+                break
+
+    def stop(self):
+        self.stop_evt.set()
+        self.sock.close()
+
+
 class TrackOverlay(Overlay):
     """Vẽ box mục tiêu ngay trên laptop, giống gs_overlay.py trên Radxa: mục tiêu xanh lá (đang thấy)
     / vàng (dự đoán, lost_frames > 0), các track khác xanh lơ, nhãn "#id lớp %", tâm ngắm, dòng
@@ -1134,7 +1167,7 @@ class Viewer:
         self.windowed_size = args.size or (w, (w * 9 // 16) & ~1)
         self.font = sys_font(max(14, round(desk_h / 70)))
         self.big_font = sys_font(max(36, round(desk_h / 14)), bold=True)
-        kind = " (box vẽ trên Radxa)" if args.port == 5600 else (" (box vẽ trên laptop)" if track else "")
+        kind = " (box vẽ trên laptop)" if track else ""
         pygame.display.set_caption(f"UAV Viewer — UDP :{args.port}{kind}")
         self._set_mode(args.fullscreen)
         self.scale = make_scaler(args.scale)
@@ -1366,8 +1399,8 @@ class Viewer:
         if last == 0.0:
             return ("NO SIGNAL", [
                 f"đang chờ RTP/H.264 trên UDP :{port} — IP laptop: {', '.join(self.ips) or '?'}",
-                "chưa nhận gói nào: GS_ARGS trên Radxa phải trỏ tới 1 IP ở trên (cắm dây: 192.168.50.2);"
-                " Windows Firewall phải Allow app này"])
+                f"chưa nhận gói nào: kiểm tra dây tới Radxa ({self.args.gs or 'tắt tự đăng ký'}), service"
+                " uav-gs-forward trên Radxa, Windows Firewall phải Allow app này"])
         if now - last > NO_SIGNAL_SEC:
             return ("NO SIGNAL", [f"không có gói {now - last:.0f} s — UDP :{port}"])
         if now - self.last_display_t > NO_SIGNAL_SEC:
@@ -1491,12 +1524,13 @@ def parse_size(text):
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
         description="Xem video UAV (RTP/H.264 qua UDP) với độ trễ thấp — thay cho VLC.")
-    p.add_argument("--port", type=int, default=5601,
-                   help="cổng UDP: 5601 = video thô từ UAV, box vẽ trên laptop (mặc định); "
-                        "5600 = video Radxa đã vẽ box + nén lại")
-    p.add_argument("--track-port", type=int, default=None, metavar="PORT",
-                   help=f"cổng nhận JSON toạ độ mục tiêu để vẽ box trên laptop (mặc định {DEFAULT_TRACK_PORT}; "
-                        "tự tắt khi xem 5600 vì Radxa đã vẽ; 0 = tắt)")
+    p.add_argument("--port", type=int, default=5600,
+                   help="cổng UDP nhận video thô từ UAV do Radxa chuyển tiếp (gs_forward.py, mặc định 5600)")
+    p.add_argument("--track-port", type=int, default=DEFAULT_TRACK_PORT, metavar="PORT",
+                   help=f"cổng nhận JSON toạ độ mục tiêu để vẽ box trên laptop (mặc định {DEFAULT_TRACK_PORT}; 0 = tắt)")
+    p.add_argument("--gs", default=DEFAULT_GS, metavar="IP",
+                   help=f"IP trạm mặt đất để tự đăng ký nhận video (gửi gói tới cổng {GS_SUBSCRIBE_PORT} mỗi giây; "
+                        f"mặc định {DEFAULT_GS}; chuỗi rỗng = tắt)")
     p.add_argument("--bind", default="0.0.0.0", help="địa chỉ nghe (mặc định 0.0.0.0)")
     p.add_argument("--loss-mode", choices=LOSS_MODES, default="auto",
                    help="xử lý mất gói: auto (mặc định: mất ≤ 20 gói → che lỗi, không đứng hình; mất nhiều → "
@@ -1577,7 +1611,7 @@ def main(argv=None):
             mon = RtpReceiver(args.bind, args.monitor_port, args.rcvbuf, lambda au: None, Stats())
         except OSError as e:
             print(f"[cảnh báo] không mở được cổng giám sát {args.monitor_port}: {e}")
-    track_port = args.track_port if args.track_port is not None else (0 if args.port == 5600 else DEFAULT_TRACK_PORT)
+    track_port = args.track_port
     track = None
     if track_port:
         try:
@@ -1594,7 +1628,10 @@ def main(argv=None):
     print(f"Nghe RTP/H.264 trên UDP {args.bind}:{args.port} (SO_RCVBUF {rx.rcvbuf // 1024} KB) · giải mã {dec.desc}"
           f" · {mode}" + (f" · giám sát thêm cổng {args.monitor_port}" if mon else ""))
     if track:
-        print(f"Vẽ box trên laptop: nhận toạ độ UDP :{track_port} (Radxa: gs_overlay.py --telem-udp <IP laptop>:{track_port})")
+        print(f"Vẽ box trên laptop: nhận toạ độ UDP :{track_port}")
+    sub = GsSubscriber(args.gs) if args.gs else None
+    if sub:
+        print(f"Tự đăng ký nhận video với trạm mặt đất {args.gs}:{GS_SUBSCRIBE_PORT} (gs_forward.py)")
     print(f"IP laptop: {', '.join(ips) or '?'} — Radxa phải gửi tới IP này (GS_ARGS trong /etc/default/uav-gs-overlay)")
     print("Phím: F/F11/nháy đúp = toàn màn hình · H = HUD · B = box · C = chế độ mất gói · Esc/Q = thoát")
     if LOG.path:
@@ -1613,6 +1650,8 @@ def main(argv=None):
         mon.start()
     if track:
         track.start()
+    if sub:
+        sub.start()
     try:
         viewer.run()
     except KeyboardInterrupt:
@@ -1622,6 +1661,8 @@ def main(argv=None):
         dec.stop()
         if mon:
             mon.stop()
+        if sub:
+            sub.stop()
         rx.join(1.0)
         dec.join(1.0)
         for ov in viewer.overlays:

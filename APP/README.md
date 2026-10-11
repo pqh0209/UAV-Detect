@@ -21,9 +21,12 @@ python -m pip install -r requirements.txt
 ## 2. Chạy
 
 ```
-python uav_viewer.py               # mặc định: luồng THÔ từ UAV (UDP 5601), box VẼ TRÊN LAPTOP (toạ độ UDP 5602)
-python uav_viewer.py --port 5600   # luồng Radxa đã vẽ box + nén lại (chậm hơn ~60–70 ms, Radxa chỉ ra ~27 fps)
+python uav_viewer.py               # video THÔ từ UAV (UDP 5600) + box VẼ TRÊN LAPTOP (toạ độ UDP 5700)
 ```
+
+Radxa chạy `gs_forward.py` (service `uav-gs-forward`): chuyển tiếp nguyên gói video và toạ độ, không giải mã,
+không vẽ, không nén lại, nên gần như không thêm độ trễ. App **tự đăng ký** với Radxa bằng cách gửi một gói UDP nhỏ
+tới `192.168.50.1:5599` mỗi giây. Radxa gửi video về đúng IP đang đăng ký, nên laptop đổi IP cũng không phải sửa gì.
 
 Box trên laptop vẽ giống hệt kiểu Radxa đang vẽ, nhưng nét theo độ phân giải màn hình:
 - Mục tiêu đang thấy: box **xanh lá**. Mục tiêu đang dự đoán (`lost_frames > 0`): box **vàng**, nhãn có "(pred)".
@@ -31,11 +34,11 @@ Box trên laptop vẽ giống hệt kiểu Radxa đang vẽ, nhưng nét theo đ
 - Tâm ngắm ở giữa khung. Góc trên trái có dòng `TELEM Hz | DET` và `TARGET #id lớp điểm err x/y`.
 - Toạ độ cũ hơn 0,5 s thì không vẽ box nữa, góc trên trái hiện `NO TELEMETRY`.
 
-Toạ độ do Radxa chuyển tiếp tới laptop bằng tuỳ chọn `--telem-udp 192.168.50.2:5602` của `gs_overlay.py` (đã cài sẵn).
-
 | Tuỳ chọn | Ý nghĩa |
 |---|---|
-| `--track-port 5602` | Cổng nhận JSON toạ độ (mặc định 5602; tự tắt khi xem 5600; `0` = tắt) |
+| `--port 5600` | Cổng nhận video (mặc định 5600) |
+| `--track-port 5700` | Cổng nhận JSON toạ độ (mặc định 5700; `0` = tắt vẽ box) |
+| `--gs 192.168.50.1` | IP Radxa để tự đăng ký nhận video (mặc định 192.168.50.1; `--gs ""` = tắt) |
 | `--loss-mode auto` | Mặc định. Mất ít gói (≤ 20 gói một lần) thì vẫn giải mã và che lỗi: hình không đứng, có thể nhoè nhẹ một vùng tới khung IDR kế tiếp (≤ 1 s). Mất nhiều gói, luồng khởi động lại hoặc hàng đợi tràn thì bỏ khung chờ IDR. |
 | `--loss-mode conceal` (= `--conceal`) | Luôn che lỗi, không bao giờ đứng hình |
 | `--loss-mode idr` | Cách cũ: mất 1 gói cũng bỏ khung tới IDR kế tiếp (đứng hình tới ~1 s, không nhoè) |
@@ -81,8 +84,8 @@ chừng (ví dụ 1600x900) app tự xử lý.
 2. Quay camera UAV vào màn hình laptop, đặt cửa sổ app cạnh đồng hồ.
 3. Chụp màn hình (`Win+Shift+S` hoặc `PrtSc`) nhiều lần. Hiệu giữa đồng hồ thật và đồng hồ trong video là độ trễ
    toàn tuyến.
-4. So sánh: VLC (~500–600 ms), app + 5600 (kỳ vọng ≈ 230–280 ms qua WiFi, ≈ 220 ms khi cắm dây) và app + 5601
-   (thấp hơn ≈ 60 ms).
+4. So sánh với VLC (~500–600 ms). App với video thô qua dây, kỳ vọng khoảng 160 ms (Pi ~130 ms + sóng ~10 ms +
+   app ~10–20 ms).
 
 Màn hình 60 Hz cho sai số khoảng ±17 ms mỗi lần đo, nên hãy chụp ít nhất 5 lần rồi lấy trung bình. Con số
 `tuổi khung` trên HUD cho biết riêng app chiếm bao nhiêu trong tổng độ trễ đó.
@@ -104,27 +107,21 @@ ffmpeg ...(như trên)... -f rtp rtp://127.0.0.1:5610
 
 ## 7. Xem qua dây Ethernet (cấu hình hiện tại)
 
-Radxa gửi UDP thẳng tới **một IP cố định** của laptop. Hiện tại đã cấu hình để xem qua dây cắm thẳng:
-
 | Máy | IP |
 |---|---|
 | Radxa (cổng USB-Ethernet) | 192.168.50.1 |
 | Laptop (card Ethernet, đặt tĩnh 192.168.50.2/24, không gateway/DNS) | 192.168.50.2 |
-| `GS_ARGS` trên Radxa | `--udp 192.168.50.2:5600 --raw-udp 192.168.50.2:5601 --telem-udp 192.168.50.2:5602` |
+
+| Trên Radxa | Giá trị |
+|---|---|
+| Service đang chạy | `uav-gs-forward` (`gs_forward.py`). `uav-gs-overlay` (vẽ box trên Radxa) đã tắt. |
+| Gửi đi | video → laptop:5600, toạ độ → laptop:5700, tới các máy đã đăng ký qua cổng 5599 và các IP `--dest` |
+| Cấu hình | `/etc/default/uav-gs-forward`, biến `FWD_ARGS` |
 
 - Dây cắm thẳng là mạng "Unidentified network" (Windows xếp vào **Public**). Firewall phải cho phép `uav_viewer.exe`
   trên Public; hiện đã cho phép.
-- Không nên xem qua WiFi nhà: laptop lấy IP bằng DHCP nên IP có thể đổi (đã đổi từ 192.168.1.62 sang 192.168.1.73).
-  Khi IP đổi, Radxa vẫn gửi tới IP cũ và app chỉ hiện NO SIGNAL.
-- Muốn đổi đích gửi (ví dụ quay lại WiFi), sửa trên Radxa. Bản cấu hình WiFi cũ đã lưu ở
-  `/etc/default/uav-gs-overlay.bak-wifi`.
-
-```
-ssh radxa@192.168.50.1
-sudo nano /etc/default/uav-gs-overlay
-#   GS_ARGS="--udp <IP_laptop>:5600 --raw-udp <IP_laptop>:5601"
-sudo systemctl restart uav-gs-overlay
-```
+- Nhờ tự đăng ký, không cần sửa `--dest` trên Radxa khi IP laptop đổi. `--dest` chỉ cần cho máy xem không tự đăng ký
+  được (VLC, ffplay).
 
 ## 7b. Log chẩn đoán (khi bị mất hình / giật)
 
@@ -138,9 +135,10 @@ Mỗi dòng có giờ đến mili-giây, nên khi thấy mất hình chỉ cần
 | `IM LẶNG`, `MẤT N gói`, `RESET luồng`, `NO SIGNAL` | Sự kiện mạng |
 | `BẮT ĐẦU CHỜ IDR` / `HẾT CHỜ IDR` | Thời gian hình đứng do bỏ khung sau khi mất gói |
 
-Để so sánh hai luồng trong cùng một file log, chạy `uav_viewer.exe --monitor-port 5601` (vẫn xem 5600 như thường).
-- Cả 5600 lẫn 5601 cùng lỗi một lúc: lỗi ở đường truyền tới laptop.
-- Chỉ 5600 lỗi: lỗi ở khâu vẽ box + nén lại trên Radxa.
+`--monitor-port PORT` nghe thêm một cổng khác chỉ để ghi log so sánh, không hiển thị.
+
+Mất gói trên luồng thô chủ yếu đến từ sóng UAV → Radxa. Đối chiếu với log `wfb_rx` trên Radxa
+(`journalctl | grep 'packets lost'`).
 
 Các tham số khác: `--log FILE` để ghi vào file chỉ định, `--no-log` để tắt ghi log.
 
@@ -151,8 +149,7 @@ lệnh ở cuối mục này, hoặc tải ở mục Releases nếu đã đăng.
 
 | File | Dùng để |
 |---|---|
-| `uav_viewer.exe` | Nháy đúp để xem luồng thô 5601 với box vẽ trên laptop. Tham số dùng như bản Python, ví dụ `uav_viewer.exe --conceal`. |
-| `uav_viewer_5600.bat` | Nháy đúp để xem luồng 5600 (box do Radxa vẽ). Phải nằm cùng thư mục với `uav_viewer.exe`. |
+| `uav_viewer.exe` | Nháy đúp để xem video kèm box vẽ trên laptop. Tham số dùng như bản Python, ví dụ `uav_viewer.exe --conceal`. |
 
 - Đây là 1 file duy nhất (khoảng 52 MB), chép sang máy Windows 64-bit khác vẫn chạy. Mỗi lần mở mất khoảng 3–4 s để
   giải nén; độ trễ video không bị ảnh hưởng.

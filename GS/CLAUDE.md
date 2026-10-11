@@ -107,12 +107,12 @@ Cảm biến IMX708 (mode 1536x864 @30)
 | 1 | Card RTL8812EU + driver svpcom `rtl8812eu` (DKMS) | Driver **XONG**. Card **CHẬP CHỜN do phần cứng** (xem mục 8) |
 | 2 | Cài wfb-ng 25.1.117, cấu hình `/etc/wifibroadcast.cfg` (kênh 165, VN, `link_domain=default`, txpower 5 dBm) | **XONG, ĐANG CHẠY** (enabled) từ 2026-10-11 + `wfb-watchdog` tự phục hồi |
 | 3 | `/etc/gs.key` | **ĐÃ ĐẶT** 2026-10-11 (64 byte, root 600). Khoá công khai UAV trong file: `c50df529…5a5a`; khoá công khai GS suy ra: `5401fb15…1f51` — cần đối chiếu với `/etc/drone.key` trên Pi |
-| 4–5 | Giải mã video + vẽ box + nén lại + RTSP: `gs_overlay.py`, service `uav-gs-overlay` | **XONG, đang chạy, đã thử bằng giả lập** |
+| 4–5 | Hiển thị + vẽ box | **Từ 2026-10-11: LAPTOP vẽ box** (app riêng của người dùng). Radxa chỉ chuyển tiếp nguyên vẹn video RTP + JSON toạ độ bằng `gs_forward.py` (service `uav-gs-forward`). `gs_overlay.py`/`uav-gs-overlay` (vẽ box trên Radxa) đã **disable**, giữ code để dự phòng |
 | 6 | Kiểm chứng toàn tuyến với UAV thật | **Video + toạ độ THẬT đã lên RTSP** (2026-10-11, ~1 m): 29 fps, telem 30 Hz, RSSI −48 dBm, 0 mất gói. Chưa thử tầm xa |
 | 7 | Kênh lệnh chọn mục tiêu GS → UAV | Chưa |
 
-Phương án hiển thị đã chốt: **(c)** — Radxa giải mã → vẽ box → nén lại H.264 → RTSP qua Ethernet
-tới máy tính xem (VLC/ffplay/QGC). Máy xem không cần chương trình riêng.
+Phương án hiển thị: ban đầu (c) Radxa vẽ box + nén lại (~60–70 ms, ~1.6 nhân CPU); **từ 2026-10-11 đổi sang
+laptop vẽ box** (app riêng trên laptop, Radxa chỉ chuyển tiếp — xem mục 8 "Chuyển tiếp tới laptop").
 
 ## 5. Bẫy đã gặp — tránh lặp lại
 
@@ -208,6 +208,7 @@ tới máy tính xem (VLC/ffplay/QGC). Máy xem không cần chương trình ri�
 | `uav.sdp` | File mô tả luồng RTP/UDP cổng 5600 cho VLC/ffplay trên laptop (QGroundControl tự nhận UDP 5600) |
 | `test_sender.py` | Giả lập UAV (video 1080p30 có khối trắng chạy vòng tròn + JSON khớp vị trí) → thử không cần UAV |
 | `test_latency.py` | Đo độ trễ toàn tuyến khi chạy với `test_sender.py --telem-copy 5701` |
+| `gs_forward.py` + `uav-gs-forward.service` | **ĐANG DÙNG** (enabled). Chuyển tiếp nguyên vẹn: RTP 127.0.0.1:5600 (từ wfb-ng) → laptop:5600; JSON 0.0.0.0:5700 (tunnel) → laptop:5700. Máy nhận = `--dest` trong `/etc/default/uav-gs-forward` (hiện `192.168.1.73`) **và/hoặc tự đăng ký**: máy xem gửi gói UDP bất kỳ tới Radxa cổng **5599** mỗi ~1 s (hết hạn sau 5 s) → không phải sửa Radxa khi laptop đổi IP. ~25% 1 nhân CPU, thêm < 1 ms trễ. Log: `journalctl -u uav-gs-forward -f` |
 | `wfb_watchdog.py` + `wfb-watchdog.service` | Giám sát link wfb-ng, tự reset USB / nạp lại driver 8812eu (root, enabled) — xem mục "Link wfb-ng thật" |
 
 Hành vi: không có client xem → không vẽ/nén (gần 0% CPU). Mất video >1 s → phát khung đen

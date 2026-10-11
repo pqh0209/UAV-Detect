@@ -1,0 +1,6 @@
+# Tham số cho gs_forward.py (service uav-gs-forward). Sửa xong: sudo systemctl restart uav-gs-forward
+# --dest IP           : máy nhận cố định (laptop). DHCP đổi IP thì sửa ở đây, HOẶC để app trên laptop
+#                       gửi 1 gói UDP bất kỳ tới Radxa cổng 5599 mỗi ~1 s (tự đăng ký, không cần sửa gì).
+# Cắm dây thẳng laptop ↔ Radxa: --dest 192.168.50.2
+# Mặc định: video → cổng 5600, toạ độ → cổng 5700 (đổi: --video-out-port / --telem-out-port)
+FWD_ARGS="--dest 192.168.1.73"
