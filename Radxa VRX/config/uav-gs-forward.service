@@ -1,0 +1,15 @@
+[Unit]
+Description=UAV GS: forward raw wfb-ng video + target telemetry to viewer
+After=network-online.target wifibroadcast@gs.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=radxa
+EnvironmentFile=-/etc/default/uav-gs-forward
+ExecStart=/usr/bin/python3 /home/radxa/uav-project/gs/gs_forward.py $FWD_ARGS
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

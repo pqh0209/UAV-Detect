@@ -1,0 +1,5 @@
+# Khoá wfb-ng: KHÔNG BAO GIỜ đưa lên git
+*.key
+__pycache__/
+*.pyc
+*.bak

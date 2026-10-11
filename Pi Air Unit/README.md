@@ -21,10 +21,12 @@ Cảm biến IMX708 (mode 1536x864 @30)
 
 | Trên Pi | Vào repo |
 |---|---|
-| `~/uav-project/uav-wfb-ng/app/uav_tracker.py`, `sort_tracker.py` (và file khác trong `app/`) | `UAV/app/` |
-| File service `uav-tracker.service` | `UAV/` |
-| `/etc/wifibroadcast.cfg` (profile drone) | `UAV/config/` |
+| `~/uav-project/uav-wfb-ng/app/uav_tracker.py`, `sort_tracker.py` (và file khác trong `app/`) | `Pi Air Unit/app/` |
+| File service `uav-tracker.service` | `Pi Air Unit/` |
+| `/etc/wifibroadcast.cfg` (profile drone) | `Pi Air Unit/config/` |
 
 **Không** chép `/etc/drone.key`.
 
-Chi tiết phần cứng, cấu hình wfb-ng và các lỗi đã gặp: xem [`GS/CLAUDE.md`](../GS/CLAUDE.md), mục 2–7.
+Giao diện với trạm mặt đất (kênh wfb-ng, tunnel, định dạng JSON): xem [`Radxa VRX/README.md`](../Radxa%20VRX/README.md).
+Tài liệu bàn giao cũ có đủ chi tiết phần cứng Pi và các lỗi đã gặp nằm trong lịch sử git
+(commit `67383c2`, file `GS/CLAUDE.md`, mục 2–7).
