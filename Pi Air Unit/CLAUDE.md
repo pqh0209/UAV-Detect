@@ -1,7 +1,8 @@
 # CLAUDE.md — hướng dẫn cho Claude Code / AI agent
 
 Đọc `README.md` để biết kiến trúc, giao diện UAV ↔ mặt đất, số đo và xử lý sự cố.
-Repo này chỉ chứa **phía UAV**. Trạm mặt đất (Radxa Zero 3W) có repo/code riêng.
+Thư mục này chứa **phía UAV**. Trong repo chung còn có `Radxa VRX/` (trạm mặt đất, chỉ chuyển tiếp)
+và `MH Controller/` (app laptop: giải mã + vẽ box).
 
 ## Bối cảnh
 
@@ -59,7 +60,7 @@ Service cài từ `deploy/etc/systemd/system/uav-tracker.service` (thay `@REPO@`
   - Coral lỗi → video vẫn chạy, thử lại với thời gian chờ tăng dần 5 → 60 s. Thử dồn dập từng kéo sụt áp cả hệ thống.
   - Camera/encoder/gst chết hoặc luồng detect đứng > 10 s → thoát mã 1 để systemd restart.
   - `kill -USR1 <pid>` in stack mọi luồng ra log.
-- Toạ độ chuẩn hoá 0..1. Định dạng JSON trong README là **giao diện với mặt đất**: thêm trường thì được, đổi hoặc xoá trường thì phải sửa cả `gs_overlay.py`.
+- Toạ độ chuẩn hoá 0..1. Định dạng JSON trong README là **giao diện với mặt đất**: thêm trường thì được, đổi hoặc xoá trường thì phải sửa cả app laptop (`MH Controller/uav_viewer.py`, `TrackReceiver` / `TrackOverlay`).
 
 ## Bẫy đã gặp (chi tiết trong README)
 

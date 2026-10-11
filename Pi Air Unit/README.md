@@ -5,7 +5,8 @@ và toạ độ mục tiêu được gửi xuống trạm mặt đất qua **[wf
 (WiFi broadcast: card RTL8812AU ở chế độ monitor, kênh 5.8 GHz).
 
 - **UAV:** Raspberry Pi 4B + camera IMX708 + Coral USB Accelerator. Video H.264 gửi xuống là video gốc. Detect/tracking chạy song song và chỉ gửi toạ độ.
-- **Trạm mặt đất** (repo riêng): Radxa Zero 3W. Nhận video và toạ độ, vẽ box, phát RTSP cho máy xem (VLC/ffplay/QGC).
+- **Trạm mặt đất** (thư mục `Radxa VRX/`): Radxa Zero 3W. Nhận video và toạ độ rồi **chuyển tiếp nguyên vẹn** sang laptop (`gs_forward.py`, thêm < 1 ms).
+- **Laptop** (thư mục `MH Controller/`): app `uav_viewer` giải mã video độ trễ thấp và **vẽ box** từ toạ độ.
 - **Chưa có gimbal.** Toạ độ đã có trường `err` (lệch tâm khung) để sau này điều khiển gimbal.
 
 ```
@@ -17,7 +18,10 @@ và toạ độ mục tiêu được gửi xuống trạm mặt đất qua **[wf
                                                                                                     sóng 5.8 GHz
                          Trạm mặt đất (Radxa Zero 3W)                                                    │
  RTL8812EU ─ wfb-ng gs ─┬─ video RTP → :5600 ─┐                                                          │
-                        └─ tunnel 10.5.0.1 → :5700 ─┴─ gs_overlay: giải mã → vẽ box → nén → RTSP :8554/uav
+                        └─ tunnel 10.5.0.1 → :5700 ─┴─ gs_forward: chuyển tiếp nguyên gói qua Ethernet
+                                                         │  (laptop tự đăng ký nhận: UDP :5599 mỗi giây)
+                         Laptop (Windows)                ▼
+ uav_viewer: video :5600 → giải mã (PyAV, LOW_DELAY) → hiển thị; toạ độ :5700 → vẽ box + HUD
 ```
 
 ## Cấu trúc repo
@@ -168,11 +172,12 @@ Giới hạn phần cứng Pi 4:
 ## Trạng thái và việc còn mở
 
 - [x] UAV: video 1080p30 → wfb-ng, Coral detect + SORT 30 fps, toạ độ qua tunnel, tự phục hồi bằng systemd.
-- [x] Mặt đất (repo riêng): wfb-ng gs, overlay + RTSP.
+- [x] Mặt đất (`Radxa VRX/`): wfb-ng gs + `gs_forward.py` chuyển tiếp sang laptop. Bỏ cách cũ vẽ box + nén lại + RTSP trên Radxa.
+- [x] Laptop (`MH Controller/`): app xem video độ trễ thấp, vẽ box, che lỗi khi mất gói lẻ tẻ.
 - [x] Link thật ở khoảng 1 m: video và toạ độ đã lên.
 - [ ] Nguồn: UAV vẫn có sụt áp; card mặt đất phát yếu (5 dBm) → chiều GS→UAV mất ~27% gói.
 - [ ] Cáp CSI chập chờn khi cầm camera di chuyển.
-- [ ] Trễ hiển thị 0.6–0.8 s, phần lớn nằm ở mặt đất/trình phát (Pi + sóng chỉ ~0.1 s).
+- [x] Trễ hiển thị: trước đây 0.6–0.8 s (vẽ lại trên Radxa + VLC). Nay Radxa chỉ chuyển tiếp, app laptop chỉ thêm ~10–20 ms.
 - [ ] Thử tầm xa, đo nhiệt card WiFi, bay thử.
 - [ ] Kênh lệnh chọn mục tiêu từ mặt đất; gimbal.
 
