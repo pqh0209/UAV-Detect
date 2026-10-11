@@ -1,0 +1,7 @@
+# Cài vào venv tạo bằng: python3 -m venv --system-site-packages .venv
+# (--system-site-packages để dùng picamera2/libcamera cài bằng apt: python3-picamera2)
+numpy==1.26.4                    # <2: tflite-runtime 2.14 biên dịch với numpy 1.x
+opencv-python-headless==4.10.0.84  # 4.11+/5.x cần numpy>=2
+scipy==1.17.1
+filterpy==1.4.5
+tflite-runtime==2.14.0           # khớp libedgetpu1-std 16.0tf2.16.1

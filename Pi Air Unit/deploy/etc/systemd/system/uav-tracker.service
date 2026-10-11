@@ -1,0 +1,20 @@
+[Unit]
+Description=UAV tracker: camera 1080p30 H.264 -> wfb-ng + Coral detect + SORT tracking
+# Cần wfb-ng chạy trước (nhận video UDP 5602 và tạo tunnel drone-wfb để gửi toạ độ)
+Wants=wifibroadcast@drone.service
+After=wifibroadcast@drone.service
+
+[Service]
+Type=simple
+User=pi
+# deploy/install.sh thay @REPO@ bằng đường dẫn thật của repo
+WorkingDirectory=@REPO@/tracker
+Environment=LIBCAMERA_LOG_LEVELS=WARN
+ExecStart=@REPO@/.venv/bin/python -u uav_tracker.py
+# Tự khởi động lại khi chương trình thoát vì lỗi (camera/encoder/gst chết, libedgetpu abort...)
+Restart=always
+RestartSec=3
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

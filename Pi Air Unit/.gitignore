@@ -1,0 +1,16 @@
+# Khoá wfb-ng là bí mật — KHÔNG BAO GIỜ commit
+*.key
+keys/
+
+# Môi trường / file tạo lại được
+.venv/
+venv/
+__pycache__/
+*.pyc
+models/*.tflite
+*.deb
+*.whl
+
+# Cài đặt cục bộ của Claude Code
+.claude/
+
