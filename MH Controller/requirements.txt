@@ -1,3 +1,5 @@
-av>=10.0
+# Chạy app (đã thử: PyAV 18.1, pygame 2.6.1, numpy 2.4, Python 3.11). PyAV wheel có sẵn FFmpeg + libx264.
+av>=12
 pygame>=2.1
 numpy
+# Đóng gói exe: build_exe.ps1 tự cài pyinstaller

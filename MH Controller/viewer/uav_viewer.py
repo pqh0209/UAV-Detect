@@ -10,8 +10,11 @@ Kiến trúc: 3 luồng, chỉ giữ khung MỚI NHẤT, không bao giờ xếp 
 Không dùng demuxer RTP / file SDP của FFmpeg (có hàng đợi sắp xếp lại và bộ đệm riêng),
 không đồng bộ theo PTS/đồng hồ: có khung là hiện ngay.
 
-    python uav_viewer.py              # video thô từ UAV (UDP 5600) + box vẽ trên laptop (toạ độ UDP 5700)
-Radxa chạy gs_forward.py chuyển tiếp nguyên gói; app tự đăng ký nhận với Radxa (192.168.50.1:5599) mỗi giây.
+    python viewer/uav_viewer.py       # video thô từ UAV (UDP 5600) + box vẽ trên laptop (toạ độ UDP 5700)
+
+Trạm mặt đất (Radxa, gs/gs_forward.py) chuyển tiếp nguyên gói tới các máy xem đã đăng ký. App tự đăng ký mỗi giây
+(UDP :5599): đang nhận video thì gửi thẳng tới Radxa; mất video thì gửi tới --gs và broadcast trên mọi mạng của
+laptop → cắm dây thẳng hay cùng router đều tự nhận, không phải sửa gì trên Radxa.
 Phím: F / F11 / nháy đúp: toàn màn hình · H: HUD · B: box · C: chế độ mất gói (auto/conceal/idr) · Esc / Q: thoát
 """
 
@@ -24,7 +27,6 @@ import platform
 import queue
 import socket
 import struct
-import subprocess
 import sys
 import tempfile
 import threading
@@ -64,9 +66,11 @@ LOG_EVENTS_PER_SEC = 20  # mỗi loại sự kiện tối đa chừng này dòng
 LOG_KEEP_FILES = 30      # giữ chừng này file log mới nhất
 # --- box mục tiêu vẽ trên laptop ---
 DEFAULT_TRACK_PORT = 5700  # Radxa (gs_forward.py) chuyển tiếp JSON "uav_track" tới đây
-DEFAULT_GS = "192.168.50.1"  # trạm mặt đất (Radxa, cắm dây thẳng); app tự đăng ký nhận video với nó
-GS_SUBSCRIBE_PORT = 5599     # gs_forward.py: máy xem gửi 1 gói UDP bất kỳ mỗi ~1 s → được gửi video + toạ độ
-TRACK_MAX_AGE = 0.5        # gói toạ độ cũ hơn → không vẽ box (giống Radxa)
+# --- tự đăng ký nhận video với trạm mặt đất (gs_forward.py) ---
+DEFAULT_GS = "192.168.50.1"  # Radxa khi cắm dây thẳng (IP tĩnh phụ trên cổng Ethernet của nó)
+GS_SUBSCRIBE_PORT = 5599     # máy xem gửi 1 gói UDP bất kỳ mỗi ~1 s → được gửi video + toạ độ (hết hạn sau 5 s)
+GS_LOST_SEC = 2.0            # không có video quá chừng này → tìm lại Radxa (gửi --gs + broadcast)
+TRACK_MAX_AGE = 0.5        # gói toạ độ cũ hơn → không vẽ box
 BOX_GREEN = (40, 230, 40)      # mục tiêu đang thấy
 BOX_YELLOW = (255, 210, 0)     # mục tiêu đang dự đoán (lost_frames > 0)
 BOX_CYAN = (0, 210, 230)       # các track khác
@@ -850,8 +854,8 @@ class H264Decoder(threading.Thread):
 # 3. Hiển thị
 # ----------------------------------------------------------------------------------------------
 class Overlay:
-    """Lớp vẽ chồng lên video. Giai đoạn sau: box mục tiêu từ JSON `uav_track` (xem luồng thô 5601)
-    và click chuột chọn mục tiêu gửi về UAV. Toạ độ chuẩn hoá 0..1 theo khung video (xem to_px)."""
+    """Lớp vẽ chồng lên video (TrackOverlay vẽ box mục tiêu). on_click để dành cho việc sau: click chọn
+    mục tiêu gửi về UAV. Toạ độ chuẩn hoá 0..1 theo khung video (xem to_px)."""
 
     def draw(self, surface, video_rect, now):
         pass
@@ -880,7 +884,7 @@ def _box(v):
 
 
 def _track(d):
-    """Làm sạch 1 track/target trong JSON từ UAV (không tin tuyệt đối định dạng) — giống gs_overlay.py."""
+    """Làm sạch 1 track/target trong JSON từ UAV (không tin tuyệt đối định dạng; xem uav_tracker.py)."""
     if not isinstance(d, dict):
         return None
     box = _box(d.get("box"))
@@ -899,7 +903,7 @@ def _track(d):
 
 
 class TrackReceiver(threading.Thread):
-    """Nhận JSON "uav_track" (~30 gói/s) mà Radxa chuyển tiếp tới laptop (gs_overlay.py --telem-udp),
+    """Nhận JSON "uav_track" (~30 gói/s) mà Radxa (gs_forward.py) chuyển tiếp tới laptop,
     giữ gói mới nhất đã làm sạch."""
 
     def __init__(self, bind, port):
@@ -982,39 +986,77 @@ class TrackReceiver(threading.Thread):
 
 class GsSubscriber(threading.Thread):
     """Đăng ký nhận video với trạm mặt đất (gs_forward.py trên Radxa): mỗi giây gửi 1 gói UDP nhỏ tới
-    GS:5599 → Radxa gửi video + toạ độ về đúng IP của laptop (hết hạn sau 5 s nếu app tắt). Nhờ vậy
-    laptop đổi IP không phải sửa gì trên Radxa."""
+    Radxa:5599 → Radxa gửi video + toạ độ về IP nguồn của gói đó (hết hạn sau 5 s nếu app tắt).
 
-    def __init__(self, gs_ip, port=GS_SUBSCRIBE_PORT):
+    - Đang nhận video (source() trả IP Radxa) → chỉ gửi thẳng tới IP đó: Radxa chỉ gửi về đúng 1 đường,
+      không gửi trùng qua WiFi khi laptop vừa cắm dây vừa có WiFi.
+    - Chưa / mất video quá GS_LOST_SEC → gửi tới các IP --gs và broadcast trên từng mạng của laptop,
+      nên cắm dây thẳng (192.168.50.x) hay cùng router (DHCP) đều tự tìm được Radxa."""
+
+    def __init__(self, gs_ips, source, port=None):
         super().__init__(name="gs-sub", daemon=True)
-        self.addr = (gs_ip, port)
+        self.gs_ips = list(gs_ips)
+        self.source = source             # hàm → IP Radxa đang gửi video tới (None nếu chưa / mất video)
+        self.port = port or GS_SUBSCRIBE_PORT
         self.stop_evt = threading.Event()
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.bcast = {}                  # IP laptop → socket gửi broadcast ra đúng mạng đó
+
+    def _send(self, sock, dst):
+        try:
+            sock.sendto(b"uav_viewer", (dst, self.port))
+            return True
+        except OSError:                  # chưa cắm dây / mạng chưa lên → thử lại lần sau
+            return False
+
+    def _broadcast(self):
+        """Gửi 255.255.255.255 từ từng IP của laptop: Windows đẩy gói ra đúng card mạng có IP đó."""
+        ips = set(local_ips())
+        for ip in list(self.bcast):
+            if ip not in ips:
+                self.bcast.pop(ip).close()
+        for ip in ips:
+            s = self.bcast.get(ip)
+            if s is None:
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                    s.bind((ip, 0))
+                except OSError:
+                    continue
+                self.bcast[ip] = s
+            self._send(s, "255.255.255.255")
 
     def run(self):
-        ok = None
+        mode = None
         while True:
-            try:
-                self.sock.sendto(b"uav_viewer", self.addr)
-                if ok is not True:
-                    LOG("app", f"đăng ký nhận video với trạm mặt đất {self.addr[0]}:{self.addr[1]}")
-                ok = True
-            except OSError as e:                 # chưa cắm dây / Radxa chưa lên → thử lại sau
-                if ok is not False:
-                    LOG("app", f"không gửi được gói đăng ký tới {self.addr[0]}:{self.addr[1]}: {e}")
-                ok = False
+            src = self.source()
+            if src:
+                if mode != src:
+                    LOG("app", f"đang nhận video từ trạm mặt đất {src} → đăng ký thẳng với {src}:{self.port}")
+                    mode = src
+                self._send(self.sock, src)
+            else:
+                if mode != "tìm":
+                    LOG("app", f"chưa / mất video → tìm trạm mặt đất: gửi đăng ký tới "
+                               f"{', '.join(self.gs_ips) or '(không có --gs)'} + broadcast cổng {self.port}")
+                    mode = "tìm"
+                for ip in self.gs_ips:
+                    self._send(self.sock, ip)
+                self._broadcast()
             if self.stop_evt.wait(1.0):
                 break
 
     def stop(self):
         self.stop_evt.set()
-        self.sock.close()
+        for s in [self.sock, *self.bcast.values()]:
+            s.close()
 
 
 class TrackOverlay(Overlay):
-    """Vẽ box mục tiêu ngay trên laptop, giống gs_overlay.py trên Radxa: mục tiêu xanh lá (đang thấy)
-    / vàng (dự đoán, lost_frames > 0), các track khác xanh lơ, nhãn "#id lớp %", tâm ngắm, dòng
-    TELEM / TARGET góc trên trái. Vẽ ở độ phân giải màn hình nên nét sắc; Radxa không phải vẽ + nén lại."""
+    """Vẽ box mục tiêu trên laptop: mục tiêu xanh lá (đang thấy) / vàng (dự đoán, lost_frames > 0), các track
+    khác xanh lơ, nhãn "#id lớp %", tâm ngắm, dòng TELEM / TARGET góc trên trái. Vẽ ở độ phân giải màn hình
+    nên nét sắc."""
 
     def __init__(self, receiver):
         self.rx = receiver
@@ -1144,11 +1186,9 @@ def fill_bars(screen, x, y, w, h, W, H):
 class Viewer:
     """Luồng chính (UI): chỉ vẽ khung giải mã mới nhất — khung đến muộn bị đè, không chờ."""
 
-    def __init__(self, args, stats, slot, rx, dec, queue, overlays=(), ips=(), monitor=None, track=None):
+    def __init__(self, args, stats, slot, rx, dec, queue, overlays=(), ips=(), track=None):
         self.args, self.stats, self.slot = args, stats, slot
         self.rx, self.dec, self.queue = rx, dec, queue
-        self.monitor = monitor           # RtpReceiver cổng phụ chỉ để ghi log so sánh (--monitor-port)
-        self._mprev = monitor.stats.snapshot() if monitor else None
         self.track = track               # TrackReceiver (toạ độ mục tiêu) hoặc None
         self._prev_track = 0
         self.overlays = list(overlays)
@@ -1399,8 +1439,8 @@ class Viewer:
         if last == 0.0:
             return ("NO SIGNAL", [
                 f"đang chờ RTP/H.264 trên UDP :{port} — IP laptop: {', '.join(self.ips) or '?'}",
-                f"chưa nhận gói nào: kiểm tra dây tới Radxa ({self.args.gs or 'tắt tự đăng ký'}), service"
-                " uav-gs-forward trên Radxa, Windows Firewall phải Allow app này"])
+                "chưa nhận gói nào: kiểm tra dây / mạng tới Radxa, service uav-gs-forward trên Radxa,"
+                " Windows Firewall phải Allow app này"])
         if now - last > NO_SIGNAL_SEC:
             return ("NO SIGNAL", [f"không có gói {now - last:.0f} s — UDP :{port}"])
         if now - self.last_display_t > NO_SIGNAL_SEC:
@@ -1493,21 +1533,6 @@ class Viewer:
                           f" | bỏ {d['q_dropped'] + d['idr_dropped']} che {d['concealed']} lỗi {d['dec_errors']} đè {over}"
                           f" | IDR {st.idr_interval:.2f} s/{st.idr_frames} khung {st.idr_bytes // 1024} KB{trk}")
         st.max_gap = st.late_max = 0.0
-        if self.monitor:
-            self._log_monitor(dt)
-
-    def _log_monitor(self, dt):
-        """Dòng số liệu của cổng phụ (--monitor-port) để so với cổng đang xem."""
-        m = self.monitor
-        ms = m.stats
-        cur = ms.snapshot()
-        d = {k: cur[k] - self._mprev[k] for k in cur}
-        self._mprev = cur
-        LOG(m.name, f"nhận {d['aus'] / dt:.1f} khung/s {d['bytes'] * 8 / dt / 1e6:.2f} Mb/s {d['packets']} gói"
-                    f" | mất {d['lost']} muộn {d['late']} hỏng {d['corrupt_aus']}"
-                    f" | lặng_max {ms.max_gap * 1000:.0f} ms tới_muộn_max {ms.late_max * 1000:.0f} ms"
-                    f" | IDR {ms.idr_interval:.2f} s/{ms.idr_frames} khung {ms.idr_bytes // 1024} KB")
-        ms.max_gap = ms.late_max = 0.0
 
 
 # ----------------------------------------------------------------------------------------------
@@ -1528,9 +1553,11 @@ def parse_args(argv=None):
                    help="cổng UDP nhận video thô từ UAV do Radxa chuyển tiếp (gs_forward.py, mặc định 5600)")
     p.add_argument("--track-port", type=int, default=DEFAULT_TRACK_PORT, metavar="PORT",
                    help=f"cổng nhận JSON toạ độ mục tiêu để vẽ box trên laptop (mặc định {DEFAULT_TRACK_PORT}; 0 = tắt)")
-    p.add_argument("--gs", default=DEFAULT_GS, metavar="IP",
-                   help=f"IP trạm mặt đất để tự đăng ký nhận video (gửi gói tới cổng {GS_SUBSCRIBE_PORT} mỗi giây; "
-                        f"mặc định {DEFAULT_GS}; chuỗi rỗng = tắt)")
+    p.add_argument("--gs", default=DEFAULT_GS, metavar="IP[,IP]",
+                   help=f"IP trạm mặt đất để tự đăng ký nhận video (cổng {GS_SUBSCRIBE_PORT}, mỗi giây; mặc định "
+                        f"{DEFAULT_GS}). Ngoài ra app luôn broadcast tìm Radxa khi chưa có video")
+    p.add_argument("--no-subscribe", action="store_true",
+                   help="không tự đăng ký (Radxa đã đặt --dest cố định tới laptop)")
     p.add_argument("--bind", default="0.0.0.0", help="địa chỉ nghe (mặc định 0.0.0.0)")
     p.add_argument("--loss-mode", choices=LOSS_MODES, default="auto",
                    help="xử lý mất gói: auto (mặc định: mất ≤ 20 gói → che lỗi, không đứng hình; mất nhiều → "
@@ -1555,8 +1582,6 @@ def parse_args(argv=None):
     p.add_argument("--log", default=None, metavar="FILE",
                    help="file log chẩn đoán (mặc định: thư mục logs cạnh app, giữ 30 file mới nhất)")
     p.add_argument("--no-log", action="store_true", help="không ghi log chẩn đoán")
-    p.add_argument("--monitor-port", type=int, default=None, metavar="PORT",
-                   help="nghe thêm 1 cổng chỉ để ghi log so sánh (vd 5601 khi đang xem 5600), không hiển thị")
     return p.parse_args(argv)
 
 
@@ -1605,12 +1630,6 @@ def main(argv=None):
         LOG("app", f"không mở được UDP {args.bind}:{args.port}: {e}")
         LOG.close()
         return 2
-    mon = None
-    if args.monitor_port:
-        try:
-            mon = RtpReceiver(args.bind, args.monitor_port, args.rcvbuf, lambda au: None, Stats())
-        except OSError as e:
-            print(f"[cảnh báo] không mở được cổng giám sát {args.monitor_port}: {e}")
     track_port = args.track_port
     track = None
     if track_port:
@@ -1626,28 +1645,33 @@ def main(argv=None):
     mode = f"mất gói: {loss_mode} ({LOSS_MODE_TEXT[loss_mode]})"
     print(f"UAV Viewer — {versions}")
     print(f"Nghe RTP/H.264 trên UDP {args.bind}:{args.port} (SO_RCVBUF {rx.rcvbuf // 1024} KB) · giải mã {dec.desc}"
-          f" · {mode}" + (f" · giám sát thêm cổng {args.monitor_port}" if mon else ""))
+          f" · {mode}")
     if track:
         print(f"Vẽ box trên laptop: nhận toạ độ UDP :{track_port}")
-    sub = GsSubscriber(args.gs) if args.gs else None
-    if sub:
-        print(f"Tự đăng ký nhận video với trạm mặt đất {args.gs}:{GS_SUBSCRIBE_PORT} (gs_forward.py)")
-    print(f"IP laptop: {', '.join(ips) or '?'} — Radxa phải gửi tới IP này (GS_ARGS trong /etc/default/uav-gs-overlay)")
+    sub = None
+    if not args.no_subscribe:
+        gs_ips = [ip.strip() for ip in args.gs.split(",") if ip.strip()]
+
+        def video_source():
+            last = rx.last_packet_time
+            return rx.source if last and clock() - last < GS_LOST_SEC else None
+
+        sub = GsSubscriber(gs_ips, video_source)
+        print(f"Tự đăng ký nhận video với trạm mặt đất (cổng {GS_SUBSCRIBE_PORT}): "
+              f"{', '.join(gs_ips) or '-'} + broadcast khi chưa có video")
+    print(f"IP laptop: {', '.join(ips) or '?'}")
     print("Phím: F/F11/nháy đúp = toàn màn hình · H = HUD · B = box · C = chế độ mất gói · Esc/Q = thoát")
     if LOG.path:
         print(f"Log chẩn đoán: {LOG.path}")
     argv_text = " ".join(sys.argv[1:] if argv is None else argv) or "(không tham số)"
     LOG("app", f"KHỞI ĐỘNG {argv_text} | {versions} | UDP :{args.port}"
-               + (f" + giám sát :{args.monitor_port}" if mon else "")
                + (f" + toạ độ :{track_port}" if track else "")
                + f" | IP laptop {', '.join(ips) or '?'} | giải mã {dec.desc}, {mode}")
 
     overlays = [TrackOverlay(track)] if track else []
-    viewer = Viewer(args, stats, slot, rx, dec, queue, overlays=overlays, ips=ips, monitor=mon, track=track)
+    viewer = Viewer(args, stats, slot, rx, dec, queue, overlays=overlays, ips=ips, track=track)
     rx.start()
     dec.start()
-    if mon:
-        mon.start()
     if track:
         track.start()
     if sub:
@@ -1659,8 +1683,6 @@ def main(argv=None):
     finally:
         rx.stop()
         dec.stop()
-        if mon:
-            mon.stop()
         if sub:
             sub.stop()
         rx.join(1.0)

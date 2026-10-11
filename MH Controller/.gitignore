@@ -1,0 +1,12 @@
+# Bản dựng exe (build_exe.ps1) — tạo lại được
+dist/
+build/
+*.spec
+
+# Log chẩn đoán và kết quả test
+logs/
+*.log
+tests/*.png
+
+__pycache__/
+*.pyc
